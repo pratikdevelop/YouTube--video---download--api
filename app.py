@@ -34,7 +34,7 @@ def save_metadata(metadata):
     with open(METADATA_FILE, 'w') as f:
         json.dump(metadata, f)
 
-def download_video(video_url, output_path):
+def download_video_file(video_url, output_path):
     ydl_opts = {'outtmpl': output_path, 'format': 'mp4'}
     try:
         with youtube_dl.YoutubeDL(ydl_opts) as ydl:
@@ -49,7 +49,7 @@ def process_video_task(video_url, segment_length):
     # Download the video with a delay
     time.sleep(random.uniform(1, 3))  # Sleep for a random duration between 1 and 3 seconds
     try:
-        download_video(video_url, video_file)
+        download_video_file(video_url, video_file)
     except Exception as e:
         logging.error(f"Error downloading video: {e}")
         return {'error': 'Error downloading video', 'details': str(e)}
@@ -68,7 +68,7 @@ def process_video_task(video_url, segment_length):
         short_file = os.path.join(UPLOAD_FOLDER, f"short_{uuid.uuid4().hex}.mp4")
         try:
             ffmpeg.input(video_file, ss=start_time, to=end_time).output(short_file).run(overwrite_output=True)
-            file_urls.append(f'http://localhost:5000/download/{os.path.basename(short_file)}')
+            file_urls.append(f'https://youtube-video-download-api-pg6z.onrender.com/download/{os.path.basename(short_file)}')
         except ffmpeg.Error as e:
             logging.error(f"Error processing video segment: {e}")
             return {'error': 'Error processing video segment', 'details': str(e)}
@@ -102,8 +102,8 @@ def process_video():
 def download_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True, mimetype='video/mp4')
 
-@app.route('/download-video', methods=['POST'])
-def download_video():
+@app.route('/download-complete-video', methods=['POST'])
+def download_complete_video():
     data = request.json
     video_url = data['url']
     
@@ -113,12 +113,12 @@ def download_video():
     # Download the video with a delay
     time.sleep(random.uniform(1, 3))  # Sleep for a random duration between 1 and 3 seconds
     try:
-        download_video(video_url, video_file)
+        download_video_file(video_url, video_file)
     except Exception as e:
         logging.error(f"Error downloading complete video: {e}")
         return jsonify({'error': 'Error downloading video', 'details': str(e)}), 500
 
-    return jsonify({'fileUrl': f'http://localhost:5000/download/{os.path.basename(video_file)}'})
+    return jsonify({'fileUrl': f'https://youtube-video-download-api-pg6z.onrender.com/download/{os.path.basename(video_file)}'})
 
 @app.route('/list-shorts', methods=['GET'])
 def list_shorts():
