@@ -5,6 +5,12 @@ import uuid
 import json
 import yt_dlp as youtube_dl
 import ffmpeg
+import logging
+import random
+import time
+
+# Setup logging
+logging.basicConfig(level=logging.DEBUG)
 
 app = Flask(__name__)
 CORS(app)
@@ -28,6 +34,48 @@ def save_metadata(metadata):
     with open(METADATA_FILE, 'w') as f:
         json.dump(metadata, f)
 
+def download_video(video_url, output_path):
+    ydl_opts = {'outtmpl': output_path, 'format': 'mp4'}
+    try:
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video_url])
+    except Exception as e:
+        logging.error(f"Error downloading video: {e}")
+        raise
+
+def process_video_task(video_url, segment_length):
+    video_file = os.path.join(UPLOAD_FOLDER, f"video_{uuid.uuid4().hex}.mp4")
+
+    # Download the video with a delay
+    time.sleep(random.uniform(1, 3))  # Sleep for a random duration between 1 and 3 seconds
+    try:
+        download_video(video_url, video_file)
+    except Exception as e:
+        logging.error(f"Error downloading video: {e}")
+        return {'error': 'Error downloading video', 'details': str(e)}
+
+    # Probe video duration
+    try:
+        probe = ffmpeg.probe(video_file, v='error', select_streams='v:0', show_entries='stream=duration')
+        duration = float(probe['streams'][0]['duration'])
+    except ffmpeg.Error as e:
+        logging.error(f"Error probing video duration: {e}")
+        return {'error': 'Error probing video duration', 'details': str(e)}
+
+    file_urls = []
+    for start_time in range(0, int(duration), segment_length):
+        end_time = min(start_time + segment_length, duration)
+        short_file = os.path.join(UPLOAD_FOLDER, f"short_{uuid.uuid4().hex}.mp4")
+        try:
+            ffmpeg.input(video_file, ss=start_time, to=end_time).output(short_file).run(overwrite_output=True)
+            file_urls.append(f'http://localhost:5000/download/{os.path.basename(short_file)}')
+        except ffmpeg.Error as e:
+            logging.error(f"Error processing video segment: {e}")
+            return {'error': 'Error processing video segment', 'details': str(e)}
+
+    os.remove(video_file)  # Clean up the original video file
+    return {'fileUrls': file_urls}
+
 @app.route('/process-video', methods=['POST'])
 def process_video():
     data = request.json
@@ -40,38 +88,15 @@ def process_video():
         if segment_length <= 0:
             raise ValueError("Segment length must be a positive integer.")
     except (ValueError, TypeError) as e:
+        logging.error(f"Invalid segment length: {e}")
         return jsonify({'error': 'Invalid segment length', 'details': str(e)}), 400
 
-    video_file = os.path.join(UPLOAD_FOLDER, f"video_{uuid.uuid4().hex}.mp4")
-    ydl_opts = {'outtmpl': video_file, 'format': 'mp4'}
+    # Start video processing task
+    result = process_video_task(video_url, segment_length)
+    if 'error' in result:
+        return jsonify(result), 500
 
-    # Download the video
-    try:
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
-    except Exception as e:
-        return jsonify({'error': 'Error downloading video', 'details': str(e)}), 500
-
-    # Probe video duration
-    try:
-        probe = ffmpeg.probe(video_file, v='error', select_streams='v:0', show_entries='stream=duration')
-        duration = float(probe['streams'][0]['duration'])
-    except ffmpeg.Error as e:
-        return jsonify({'error': 'Error probing video duration', 'details': str(e)}), 500
-
-    file_urls = []
-    for start_time in range(0, int(duration), segment_length):
-        end_time = min(start_time + segment_length, duration)
-        short_file = os.path.join(UPLOAD_FOLDER, f"short_{uuid.uuid4().hex}.mp4")
-        try:
-            ffmpeg.input(video_file, ss=start_time, to=end_time).output(short_file).run(overwrite_output=True)
-            file_urls.append(f'http://localhost:5000/download/{os.path.basename(short_file)}')
-        except ffmpeg.Error as e:
-            return jsonify({'error': 'Error processing video segment', 'details': str(e)}), 500
-
-    os.remove(video_file)  # Clean up the original video file
-
-    return jsonify({'fileUrls': file_urls})
+    return jsonify(result)
 
 @app.route('/download/<filename>')
 def download_file(filename):
@@ -84,12 +109,13 @@ def download_video():
     
     # Download the complete video from YouTube
     video_file = os.path.join(UPLOAD_FOLDER, f"complete_video_{uuid.uuid4().hex}.mp4")
-    ydl_opts = {'outtmpl': video_file, 'format': 'mp4'}
 
+    # Download the video with a delay
+    time.sleep(random.uniform(1, 3))  # Sleep for a random duration between 1 and 3 seconds
     try:
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
+        download_video(video_url, video_file)
     except Exception as e:
+        logging.error(f"Error downloading complete video: {e}")
         return jsonify({'error': 'Error downloading video', 'details': str(e)}), 500
 
     return jsonify({'fileUrl': f'http://localhost:5000/download/{os.path.basename(video_file)}'})
